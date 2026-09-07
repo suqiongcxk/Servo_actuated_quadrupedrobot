@@ -135,7 +135,11 @@ int main(void)
 	// GAIT_Init(0,0,0,5, 10,10, 10,0,0,0,4.15);
   GAIT_Init(forward_start,forward_end, forward_height, resolution,
   height_above_ground, L1, L2,translate_BEGAIN, translate_END, translate_HIGH,Hip_lenth);
-  /* Uncomment for continuous forward stepping after power-on. */
+  /* Uncomment for continuous forward stepping after power-on. 
+  .\upload-github.bat -Message "优化低速站立，增加舞蹈和扭身动作"
+  .\upload-github.bat -Message "优化低速站立，增加舞蹈和扭身动作"
+  .\upload-github.bat -Message "优化低速站立，增加舞蹈和扭身动作"
+  */
   // Walk_Forward_Start();
   /* USER CODE END 2 */
 
