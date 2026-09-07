@@ -1,0 +1,52 @@
+# Only the three firmware projects and repository helper files belong here.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/upload-github.ps1
+!/upload-github.bat
+!/F103C8T6/
+!/F103C8T6后/
+!/H723zhukong/
+
+# Build output (keep vendor .lib/.a libraries required by the projects).
+**/build/
+**/MDK-ARM/F103C8T6/
+**/MDK-ARM/H723zhukong/
+**/MDK-ARM/output/
+*.o
+*.obj
+*.d
+*.crf
+*.axf
+*.elf
+*.hex
+*.map
+*.lst
+*.lnp
+*.dep
+*.build_log.htm
+*.log
+
+# Machine-specific IDE state and caches.
+*.uvguix.*
+*.uvoptx
+*.uvopt
+*.uvgui.*
+*.bak
+*.tmp
+*.swp
+.mxproject
+.cache/
+.vscode/
+.settings/
+**/MDK-ARM/keil5_disp_size_bar.exe
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local credentials must not be added with firmware.
+.env
+.env.*
+*.pem
+*.key
