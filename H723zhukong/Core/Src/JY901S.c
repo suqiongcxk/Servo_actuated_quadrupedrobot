@@ -46,6 +46,23 @@ JY901S_Status JY901S_ReadAngles(I2C_HandleTypeDef *hi2c, JY901S_AngleData *angle
     return JY901S_OK;
 }
 
+JY901S_Status JY901S_ReadAngularRates(I2C_HandleTypeDef *hi2c, JY901S_GyroData *rates)
+{
+    uint8_t buf[6];
+    HAL_StatusTypeDef status;
+    if (hi2c == NULL || rates == NULL) return JY901S_ERROR_ARGUMENT;
+    status = HAL_I2C_Mem_Read(hi2c, JY901S_I2C_ADDR,
+                             JY901S_REG_GYRO_X_L, I2C_MEMADD_SIZE_8BIT,
+                             buf, sizeof(buf), JY901S_READ_TIMEOUT_MS);
+    if (status == HAL_TIMEOUT) return JY901S_ERROR_TIMEOUT;
+    if (status != HAL_OK) return JY901S_ERROR_I2C;
+    /* Same mounting map as angles: sensor Y -> body roll, X -> body pitch. */
+    rates->roll_rate = (int16_t)((uint16_t)buf[3] << 8 | buf[2]) * INTto_GYRO;
+    rates->pitch_rate = (int16_t)((uint16_t)buf[1] << 8 | buf[0]) * INTto_GYRO;
+    rates->yaw_rate = (int16_t)((uint16_t)buf[5] << 8 | buf[4]) * INTto_GYRO;
+    return JY901S_OK;
+}
+
 
 
 
@@ -350,19 +367,24 @@ void JY901SREG_init (void)
 
 
 static JY901S_Snapshot latest_sample = {
-    {0.0f, 0.0f, 0.0f}, 0U, 0U, 0U, JY901S_ERROR_I2C, 0U
+    {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f},
+    0U, 0U, 0U, JY901S_ERROR_I2C, 0U
 };
 
 JY901S_Status JY901S_Update(I2C_HandleTypeDef *hi2c)
 {
     JY901S_AngleData angles;
+    JY901S_GyroData rates;
     JY901S_Status status = JY901S_ReadAngles(hi2c, &angles);
+    if (status == JY901S_OK)
+        status = JY901S_ReadAngularRates(hi2c, &rates);
     uint32_t now = HAL_GetTick();
     taskENTER_CRITICAL();
     latest_sample.status = status;
     latest_sample.valid = (status == JY901S_OK);
     if (status == JY901S_OK) {
         latest_sample.angles = angles;
+        latest_sample.rates = rates;
         latest_sample.timestamp_ms = now;
         latest_sample.sample_count++;
     } else {
@@ -391,10 +413,11 @@ void JY901S_PrintLatest(void)
     JY901S_GetLatest(&sample);
     if (sample.valid) {
         length = snprintf(line, sizeof(line),
-            "IMU t=%lu Roll=%.2f Pitch=%.2f Yaw=%.2f deg valid=1\r\n",
+            "IMU t=%lu Roll=%.2f Pitch=%.2f Yaw=%.2f deg Rr=%.1f Pr=%.1f dps valid=1\r\n",
             (unsigned long)sample.timestamp_ms,
             (double)sample.angles.roll, (double)sample.angles.pitch,
-            (double)sample.angles.yaw);
+            (double)sample.angles.yaw, (double)sample.rates.roll_rate,
+            (double)sample.rates.pitch_rate);
     } else {
         length = snprintf(line, sizeof(line),
             "IMU t=%lu valid=0 status=%u errors=%lu (check I2C1 PB6/PB7, addr=0x50)\r\n",

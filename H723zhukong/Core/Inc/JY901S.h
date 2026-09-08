@@ -26,6 +26,7 @@ extern  uint16_t unlock_data ;	//解锁指令
 #define JY901S_REG_ACC_X    0x34    // X轴角度低字节
 #define JY901S_REG_ACC_Y    0x35    // Y轴角度低字节
 #define JY901S_REG_ACC_Z    0x36    // Z轴角度低字节
+#define JY901S_REG_GYRO_X_L 0x37
 #define AXIS6								0x24    
 
 
@@ -42,6 +43,7 @@ extern  uint16_t unlock_data ;	//解锁指令
 
 
 #define INTto_angle                         (180.0f / 32768.0f)
+#define INTto_GYRO                          (2000.0f / 32768.0f)
 
 
 // 错误码定义
@@ -58,6 +60,12 @@ typedef struct {
     float  pitch;  // 前后俯仰：传感器 X 角，前方抬高为正
     float  yaw;    // 航向：传感器 Z 角，逆时针增大
 } JY901S_AngleData;
+
+typedef struct {
+    float roll_rate;   // Body roll rate, deg/s; sensor gyro Y.
+    float pitch_rate;  // Body pitch rate, deg/s; sensor gyro X.
+    float yaw_rate;    // Body yaw rate, deg/s; sensor gyro Z.
+} JY901S_GyroData;
  
 
 
@@ -75,6 +83,7 @@ extern JY901S_Status my_dta;
 // 函数声明
 JY901S_Status JY901S_ReadRRATE(I2C_HandleTypeDef *hi2c, uint8_t *output_rate);
 JY901S_Status JY901S_ReadAngles(I2C_HandleTypeDef *hi2c, JY901S_AngleData *angles);
+JY901S_Status JY901S_ReadAngularRates(I2C_HandleTypeDef *hi2c, JY901S_GyroData *rates);
 void PrintAngles(const JY901S_AngleData *angles) ;
 HAL_StatusTypeDef  MY_IIC_MEM_Transimit_UINT16_DATA(I2C_HandleTypeDef *hi2c, uint16_t DevAddress, uint16_t MemAddress, uint16_t MemAddSize, uint16_t pData, uint16_t Size, uint32_t Timeout);
  
@@ -112,7 +121,7 @@ HAL_StatusTypeDef JY9013S_SetRateHz_And_Save(I2C_HandleTypeDef *hi2c);
 HAL_StatusTypeDef JY9013S_SetBAUD_And_Save(I2C_HandleTypeDef *hi2c) ;
 void JY901SREG_init (void);
 HAL_StatusTypeDef JY9013S_SetAXIS6_And_Save(I2C_HandleTypeDef *hi2c) ;
-/* Monitor APIs are task-context only. Update has a single owner: JY901Task04. */
+/* Snapshot APIs are task-context only. Update has a single owner: JY901Task04. */
 #define JY901S_READ_TIMEOUT_MS 10U
 #define JY901S_SAMPLE_MS 15U
 #define JY901S_PRINT_MS 100U
@@ -122,6 +131,7 @@ HAL_StatusTypeDef JY9013S_SetAXIS6_And_Save(I2C_HandleTypeDef *hi2c) ;
 
 typedef struct {
     JY901S_AngleData angles;
+    JY901S_GyroData rates;
     uint32_t timestamp_ms; /* Last successful bus read; not sensor sample time. */
     uint32_t sample_count;
     uint32_t error_count;

@@ -74,6 +74,24 @@ void Wave_Left_Front_move(void);
 #define SIT_FRONT_HEIGHT_CM         12.0f
 #define SIT_REAR_HEIGHT_CM           7.0f
 
+/* IMU attitude feedback. Positive roll means left side high; positive pitch
+ * means front high. Flip a DIRECTION value if the physical correction is wrong.
+ */
+#define BALANCE_ENABLE                  1
+#define BALANCE_ROLL_ZERO_DEG          0.0f
+#define BALANCE_PITCH_ZERO_DEG         0.0f
+#define BALANCE_ROLL_DIRECTION         1.0f
+#define BALANCE_PITCH_DIRECTION        1.0f
+#define BALANCE_ANGLE_DEADBAND_DEG      0.30f
+#define BALANCE_MAX_ANGLE_DEG          15.0f
+#define BALANCE_MAX_RATE_DPS          100.0f
+#define BALANCE_KP_CM_PER_DEG           0.06f
+#define BALANCE_KD_CM_PER_DPS           0.004f
+#define BALANCE_MAX_LEG_CM              1.00f
+#define BALANCE_OUTPUT_FILTER_GAIN      0.15f
+#define BALANCE_WALK_SCALE              0.55f
+#define BALANCE_RESET_GAP_MS           100U
+
 /* Call Start once after GAIT_Init, before osKernelStart.
  * Walk_Forward is called by the existing gait task every 5 ms.
  * This mode owns gait parameters; Bluetooth enable/disable (5/6) still works.

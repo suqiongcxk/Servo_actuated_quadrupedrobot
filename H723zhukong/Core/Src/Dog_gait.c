@@ -1,4 +1,5 @@
 #include "Dog_gait.h"
+#include "JY901S.h"
 #include <math.h>
 
 static uint8_t posture_settling = 0;
@@ -20,6 +21,84 @@ static float Posture_Approach(float current, float target)
     return Posture_ApproachScaled(current, target, 1.0f);
 }
 
+static float balance_roll_cm = 0.0f;
+static float balance_pitch_cm = 0.0f;
+static uint32_t balance_last_call_ms = 0U;
+
+static float Balance_Clamp(float value, float limit)
+{
+    if (value > limit) return limit;
+    if (value < -limit) return -limit;
+    return value;
+}
+
+static float Balance_Deadband(float value)
+{
+    if (value > BALANCE_ANGLE_DEADBAND_DEG)
+        return value - BALANCE_ANGLE_DEADBAND_DEG;
+    if (value < -BALANCE_ANGLE_DEADBAND_DEG)
+        return value + BALANCE_ANGLE_DEADBAND_DEG;
+    return 0.0f;
+}
+
+/* roll_cm/pitch_cm describe measured tilt. Leg height signs below generate
+ * the opposite body motion. Outputs decay safely to zero if IMU data is stale.
+ */
+static void Balance_GetCorrections(float mode_scale, float *roll_cm, float *pitch_cm)
+{
+    JY901S_Snapshot sample;
+    uint32_t now = HAL_GetTick();
+    float roll_target = 0.0f;
+    float pitch_target = 0.0f;
+    float total;
+
+    if ((uint32_t)(now - balance_last_call_ms) > BALANCE_RESET_GAP_MS)
+        balance_roll_cm = balance_pitch_cm = 0.0f;
+    balance_last_call_ms = now;
+
+    if (BALANCE_ENABLE && JY901S_GetLatest(&sample) &&
+        isfinite(sample.angles.roll) && isfinite(sample.angles.pitch) &&
+        isfinite(sample.rates.roll_rate) && isfinite(sample.rates.pitch_rate))
+    {
+        float roll_error = BALANCE_ROLL_DIRECTION *
+                           (sample.angles.roll - BALANCE_ROLL_ZERO_DEG);
+        float pitch_error = BALANCE_PITCH_DIRECTION *
+                            (sample.angles.pitch - BALANCE_PITCH_ZERO_DEG);
+        float roll_rate = BALANCE_ROLL_DIRECTION * sample.rates.roll_rate;
+        float pitch_rate = BALANCE_PITCH_DIRECTION * sample.rates.pitch_rate;
+        roll_error = Balance_Deadband(Balance_Clamp(roll_error, BALANCE_MAX_ANGLE_DEG));
+        pitch_error = Balance_Deadband(Balance_Clamp(pitch_error, BALANCE_MAX_ANGLE_DEG));
+        roll_rate = Balance_Clamp(roll_rate, BALANCE_MAX_RATE_DPS);
+        pitch_rate = Balance_Clamp(pitch_rate, BALANCE_MAX_RATE_DPS);
+        roll_target = BALANCE_KP_CM_PER_DEG * roll_error +
+                      BALANCE_KD_CM_PER_DPS * roll_rate;
+        pitch_target = BALANCE_KP_CM_PER_DEG * pitch_error +
+                       BALANCE_KD_CM_PER_DPS * pitch_rate;
+        /* Keep the sum applied to any one leg inside the configured limit. */
+        total = fabsf(roll_target) + fabsf(pitch_target);
+        if (total > BALANCE_MAX_LEG_CM)
+        {
+            float scale = BALANCE_MAX_LEG_CM / total;
+            roll_target *= scale;
+            pitch_target *= scale;
+        }
+    }
+
+    balance_roll_cm += BALANCE_OUTPUT_FILTER_GAIN *
+                       (roll_target - balance_roll_cm);
+    balance_pitch_cm += BALANCE_OUTPUT_FILTER_GAIN *
+                        (pitch_target - balance_pitch_cm);
+    *roll_cm = mode_scale * balance_roll_cm;
+    *pitch_cm = mode_scale * balance_pitch_cm;
+}
+
+static float Balance_LegHeight(uint8_t leg, float roll_cm, float pitch_cm)
+{
+    float roll_sign = (leg == 0 || leg == 3) ? -1.0f : 1.0f;
+    float pitch_sign = (leg < 2) ? -1.0f : 1.0f;
+    return roll_sign * roll_cm + pitch_sign * pitch_cm;
+}
+
 /* Preserve the last commanded foot coordinates, including a lifted foot.
  * Settle them towards a neutral pose without resetting phase/height first.
  * GAIT_Init in main must have initialized link lengths before this runs.
@@ -27,7 +106,8 @@ static float Posture_Approach(float current, float target)
 static uint8_t Posture_UpdatePose(float front_height, float rear_height,
                                  float left_front_x, float left_front_lift,
                                  float twist_offset, float lateral_offset,
-                                 float stance_spread, float lateral_speed_scale)
+                                 float stance_spread, float lateral_speed_scale,
+                                 float roll_height_cm, float pitch_height_cm)
 {
     gait_XY *xy[4] = {&LEG1_XY, &LEG2_XY, &LEG3_XY, &LEG4_XY};
     gait_YZ *yz[4] = {&LEG1_YZ, &LEG2_YZ, &LEG3_YZ, &LEG4_YZ};
@@ -36,7 +116,8 @@ static uint8_t Posture_UpdatePose(float front_height, float rear_height,
     uint8_t i;
     for (i = 0; i < 4; ++i)
     {
-        float target = (i < 2) ? front_height : rear_height;
+        float target = ((i < 2) ? front_height : rear_height) +
+                       Balance_LegHeight(i, roll_height_cm, pitch_height_cm);
         float target_x = (i == 0) ? left_front_x : 0.0f;
         float target_y = (i == 0) ? left_front_lift : 0.0f;
         /* LEG1/4 are left; LEG2/3 are right.  Opposite signs widen the stance. */
@@ -71,7 +152,7 @@ static uint8_t Posture_UpdateTargets(float front_height, float rear_height,
                                     float left_front_x, float left_front_lift)
 {
     return Posture_UpdatePose(front_height, rear_height, left_front_x, left_front_lift,
-                              0.0f, 0.0f, 0.0f, 1.0f);
+                              0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
 }
 
 static uint8_t Posture_Update(float front_height, float rear_height)
@@ -85,7 +166,8 @@ static uint8_t Posture_UpdateSit(float left_front_x, float left_front_lift,
 {
     return Posture_UpdatePose(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM,
                               left_front_x, left_front_lift, 0.0f,
-                              -body_shift_right, SIT_STANCE_SPREAD_CM, 1.0f);
+                              -body_shift_right, SIT_STANCE_SPREAD_CM, 1.0f,
+                              0.0f, 0.0f);
 }
 
 static uint8_t wave_stage = 0;
@@ -223,7 +305,7 @@ void Body_Twist_move(void)
         }
         if (Posture_UpdatePose(TWIST_BODY_HEIGHT_CM, TWIST_BODY_HEIGHT_CM,
                                0.0f, 0.0f, offset, 0.0f, 0.0f,
-                               TWIST_FOLLOW_SPEED_SCALE) &&
+                               TWIST_FOLLOW_SPEED_SCALE, 0.0f, 0.0f) &&
             elapsed >= TWIST_DURATION_MS)
             twist_stage = 2;
     }
@@ -625,6 +707,8 @@ static float Tortoise_TargetResolution(void)
 void Tortoise_move(void )
 {
     float target_resolution;
+    float balance_roll;
+    float balance_pitch;
     if (Posture_BeforeWalk(Tort_height, GAIT_MODE_TORT)) return;
     target_resolution = Tortoise_TargetResolution();
     if(GAIT_MODE_LAST != GAIT_MODE_TORT)
@@ -651,6 +735,7 @@ void Tortoise_move(void )
         GAIT_MODE_LAST = GAIT_MODE_TORT;
     }else
     {
+        Balance_GetCorrections(BALANCE_WALK_SCALE, &balance_roll, &balance_pitch);
         /* Change cadence continuously with command size without a phase jump. */
         Tort_resolution += TORT_CADENCE_FILTER_GAIN *
                            (target_resolution - Tort_resolution);
@@ -687,7 +772,8 @@ void Tortoise_move(void )
 				else                      {LEG4_XY.resolution = 0;  LEG4_YZ.resolution = 0;  LEG4_XY.thase_LEG = 0; LEG4_YZ.thase_LEG = 0; }	
 				
 				
-		LEG1_YZ.LEG_BODY_height = height_above_ground;
+		LEG1_YZ.LEG_BODY_height = height_above_ground +
+                                      Balance_LegHeight(0, balance_roll, balance_pitch);
 		GET_GAIT_YZ(&LEG1_YZ , RIGHT);
 		Inverse_Kinematics_add_YZ(&LEG1_angle , &LEG1_YZ, &LEG1_XY);
     GET_GAIT_XY(&LEG1_XY , forward);
@@ -695,21 +781,24 @@ void Tortoise_move(void )
 					
 	
 	
-		LEG2_YZ.LEG_BODY_height = height_above_ground;
+		LEG2_YZ.LEG_BODY_height = height_above_ground +
+                                      Balance_LegHeight(1, balance_roll, balance_pitch);
 		GET_GAIT_YZ(&LEG2_YZ , RIGHT);
 		Inverse_Kinematics_add_YZ(&LEG2_angle , &LEG2_YZ, &LEG2_XY);
 		GET_GAIT_XY(&LEG2_XY , forward);
 		Inverse_Kinematics(&LEG2_angle , &LEG2_XY);
 		
 		
-		LEG3_YZ.LEG_BODY_height = height_above_ground;
+		LEG3_YZ.LEG_BODY_height = height_above_ground +
+                                      Balance_LegHeight(2, balance_roll, balance_pitch);
 		GET_GAIT_YZ(&LEG3_YZ , RIGHT);
 		Inverse_Kinematics_add_YZ(&LEG3_angle , &LEG3_YZ, &LEG3_XY);
 		GET_GAIT_XY(&LEG3_XY , forward);
 		Inverse_Kinematics(&LEG3_angle , &LEG3_XY);					
 		
     
-		LEG4_YZ.LEG_BODY_height = height_above_ground;
+		LEG4_YZ.LEG_BODY_height = height_above_ground +
+                                      Balance_LegHeight(3, balance_roll, balance_pitch);
 		GET_GAIT_YZ(&LEG4_YZ , RIGHT);
 		Inverse_Kinematics_add_YZ(&LEG4_angle , &LEG4_YZ, &LEG4_XY);
 		GET_GAIT_XY(&LEG4_XY , forward);
@@ -903,9 +992,14 @@ void Bound_move(void )
 
 void Stand_move(void )
 {
+    float balance_roll;
+    float balance_pitch;
     posture_settling = 0;
     /* In stand mode height_above_ground is the requested symmetric height. */
-    Posture_Update(height_above_ground, height_above_ground);
+    Balance_GetCorrections(1.0f, &balance_roll, &balance_pitch);
+    Posture_UpdatePose(height_above_ground, height_above_ground,
+                       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                       balance_roll, balance_pitch);
     GAIT_MODE_LAST = GAIT_MODE_STAND;
 }
 
