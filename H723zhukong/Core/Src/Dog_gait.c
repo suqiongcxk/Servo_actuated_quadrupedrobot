@@ -106,7 +106,8 @@ static float Balance_LegHeight(uint8_t leg, float roll_cm, float pitch_cm)
 static uint8_t Posture_UpdatePose(float front_height, float rear_height,
                                  float left_front_x, float left_front_lift,
                                  float twist_offset, float lateral_offset,
-                                 float stance_spread, float lateral_speed_scale,
+                                 float stance_spread, float height_speed_scale,
+                                 float lateral_speed_scale,
                                  float roll_height_cm, float pitch_height_cm)
 {
     gait_XY *xy[4] = {&LEG1_XY, &LEG2_XY, &LEG3_XY, &LEG4_XY};
@@ -128,7 +129,8 @@ static uint8_t Posture_UpdatePose(float front_height, float rear_height,
         float vertical;
         xy[i]->resolution = 0;
         yz[i]->resolution = 0;
-        yz[i]->LEG_BODY_height = Posture_Approach(yz[i]->LEG_BODY_height, target);
+        yz[i]->LEG_BODY_height = Posture_ApproachScaled(yz[i]->LEG_BODY_height,
+                                                       target, height_speed_scale);
         xy[i]->foot_top_X = Posture_Approach(xy[i]->foot_top_X, target_x);
         xy[i]->foot_top_Y = Posture_Approach(xy[i]->foot_top_Y, target_y);
         yz[i]->foot_top_Y = Posture_ApproachScaled(yz[i]->foot_top_Y, lateral,
@@ -152,7 +154,7 @@ static uint8_t Posture_UpdateTargets(float front_height, float rear_height,
                                     float left_front_x, float left_front_lift)
 {
     return Posture_UpdatePose(front_height, rear_height, left_front_x, left_front_lift,
-                              0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+                              0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f);
 }
 
 static uint8_t Posture_Update(float front_height, float rear_height)
@@ -166,8 +168,249 @@ static uint8_t Posture_UpdateSit(float left_front_x, float left_front_lift,
 {
     return Posture_UpdatePose(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM,
                               left_front_x, left_front_lift, 0.0f,
-                              -body_shift_right, SIT_STANCE_SPREAD_CM, 1.0f,
+                              -body_shift_right, SIT_STANCE_SPREAD_CM, 1.0f, 1.0f,
                               0.0f, 0.0f);
+}
+
+static uint8_t recovery_running = 0U;
+static uint8_t recovery_stage = 0U;
+static uint8_t recovery_attempt = 0U;
+static uint8_t recovery_push_reached = 0U;
+static float recovery_roll_direction = 1.0f;
+static float recovery_stand_height = 10.0f;
+static uint32_t recovery_stage_ms = 0U;
+static uint32_t recovery_upright_ms = 0U;
+static uint32_t fall_detect_ms = 0U;
+static uint8_t fall_detecting = 0U;
+static uint8_t recovery_upright_tracking = 0U;
+
+static uint8_t Recovery_IsUprightHeld(void)
+{
+    JY901S_Snapshot sample;
+    uint32_t now = HAL_GetTick();
+    if (JY901S_GetLatest(&sample) &&
+        fabsf(sample.angles.roll) <= RECOVERY_UPRIGHT_ROLL_DEG &&
+        fabsf(sample.angles.pitch) <= RECOVERY_UPRIGHT_PITCH_DEG)
+    {
+        if (!recovery_upright_tracking)
+        {
+            recovery_upright_tracking = 1U;
+            recovery_upright_ms = now;
+        }
+        return (uint8_t)((uint32_t)(now - recovery_upright_ms) >=
+                         RECOVERY_UPRIGHT_HOLD_MS);
+    }
+    recovery_upright_tracking = 0U;
+    return 0U;
+}
+
+static void Recovery_SelectRollDirection(void)
+{
+    recovery_roll_direction = RECOVERY_INITIAL_ROLL_DIRECTION;
+    if ((recovery_attempt & 1U) == 0U)
+        recovery_roll_direction = -recovery_roll_direction;
+}
+
+void Fall_Recovery_Monitor(void)
+{
+    JY901S_Snapshot sample;
+    uint32_t now = HAL_GetTick();
+    float body_up_z;
+    if (!FALL_RECOVERY_ENABLE) return;
+    if (recovery_running)
+    {
+        GAIT_MODE = GAIT_MODE_SELF_RIGHT;
+        return;
+    }
+    if (JY901S_GetLatest(&sample))
+    {
+        body_up_z = cosf(sample.angles.roll * 0.01745329252f) *
+                    cosf(sample.angles.pitch * 0.01745329252f);
+        if (body_up_z <= FALL_INVERTED_UP_Z_MAX)
+        {
+            if (!fall_detecting)
+            {
+                fall_detecting = 1U;
+                fall_detect_ms = now;
+            }
+            else if ((uint32_t)(now - fall_detect_ms) >= FALL_DETECT_HOLD_MS)
+            {
+                recovery_running = 1U;
+                recovery_stage = 0U;
+                recovery_attempt = 1U;
+                recovery_push_reached = 0U;
+                Recovery_SelectRollDirection();
+                recovery_stand_height = height_above_ground;
+                if (recovery_stand_height < 10.0f) recovery_stand_height = 10.0f;
+                if (recovery_stand_height > 16.0f) recovery_stand_height = 16.0f;
+                recovery_upright_tracking = 0U;
+                fall_detecting = 0U;
+                GAIT_MODE_LAST = 0U;
+                GAIT_MODE = GAIT_MODE_SELF_RIGHT;
+            }
+        }
+        else
+        {
+            fall_detecting = 0U;
+        }
+    }
+    else
+    {
+        fall_detecting = 0U;
+    }
+}
+
+void Self_Right_move(void)
+{
+    float center_height = 0.5f *
+                          (RECOVERY_TUCK_HEIGHT_CM + RECOVERY_PUSH_HEIGHT_CM);
+    float push_difference = 0.5f *
+                            (RECOVERY_PUSH_HEIGHT_CM - RECOVERY_TUCK_HEIGHT_CM);
+    uint32_t now = HAL_GetTick();
+    uint8_t done;
+
+    if (!recovery_running)
+    {
+        GAIT_MODE = GAIT_MODE_STAND;
+        return;
+    }
+    GAIT_MODE_LAST = GAIT_MODE_SELF_RIGHT;
+    posture_settling = 0U;
+
+    switch (recovery_stage)
+    {
+    case 0: /* Slowly retract all four legs. */
+        done = Posture_UpdatePose(RECOVERY_TUCK_HEIGHT_CM, RECOVERY_TUCK_HEIGHT_CM,
+                                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                  RECOVERY_TUCK_SPEED_SCALE, 1.0f, 0.0f, 0.0f);
+        if (done)
+        {
+            recovery_stage_ms = now;
+            recovery_stage = 1U;
+        }
+        break;
+
+    case 1: /* Stay tucked for one second before pushing. */
+        Posture_UpdatePose(RECOVERY_TUCK_HEIGHT_CM, RECOVERY_TUCK_HEIGHT_CM,
+                           0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                           RECOVERY_TUCK_SPEED_SCALE, 1.0f, 0.0f, 0.0f);
+        if (Recovery_IsUprightHeld())
+        {
+            recovery_stage_ms = now;
+            recovery_stage = 4U;
+            recovery_upright_tracking = 0U;
+        }
+        else if ((uint32_t)(now - recovery_stage_ms) >= RECOVERY_WAIT_AFTER_TUCK_MS)
+        {
+            Recovery_SelectRollDirection();
+            recovery_push_reached = 0U;
+            recovery_upright_tracking = 0U;
+            recovery_stage = 2U;
+        }
+        break;
+
+    case 2: /* Pre-swing all tucked legs slowly to one side. */
+        done = Posture_UpdatePose(RECOVERY_TUCK_HEIGHT_CM, RECOVERY_TUCK_HEIGHT_CM,
+                                  0.0f, 0.0f, 0.0f,
+                                  recovery_roll_direction * RECOVERY_PRE_SWING_CM,
+                                  0.0f, RECOVERY_TUCK_SPEED_SCALE,
+                                  RECOVERY_TUCK_SPEED_SCALE, 0.0f, 0.0f);
+        if (Recovery_IsUprightHeld())
+        {
+            recovery_stage_ms = now;
+            recovery_stage = 4U;
+            recovery_upright_tracking = 0U;
+        }
+        else if (done)
+        {
+            recovery_stage = 3U;
+        }
+        break;
+
+    case 3: /* Fast reverse swing plus one-side extension creates roll torque. */
+        done = Posture_UpdatePose(center_height, center_height,
+                                  0.0f, 0.0f, 0.0f,
+                                  -recovery_roll_direction * RECOVERY_POWER_SWING_CM,
+                                  0.0f, RECOVERY_PUSH_SPEED_SCALE,
+                                  RECOVERY_SWING_SPEED_SCALE,
+                                  recovery_roll_direction * push_difference, 0.0f);
+        if (Recovery_IsUprightHeld())
+        {
+            recovery_stage_ms = now;
+            recovery_stage = 4U;
+            recovery_upright_tracking = 0U;
+        }
+        else if (done && !recovery_push_reached)
+        {
+            recovery_push_reached = 1U;
+            recovery_stage_ms = now;
+        }
+        else if (recovery_push_reached &&
+                 (uint32_t)(now - recovery_stage_ms) >= RECOVERY_PUSH_HOLD_MS)
+        {
+            if (recovery_attempt < RECOVERY_MAX_ATTEMPTS)
+            {
+                recovery_attempt++;
+                recovery_push_reached = 0U;
+                recovery_stage = 0U;
+            }
+            else
+            {
+                recovery_stage = 5U;
+            }
+        }
+        break;
+
+    case 4: /* Once upright, extend all legs into the normal standing pose. */
+        done = Posture_UpdatePose(recovery_stand_height, recovery_stand_height,
+                                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                  RECOVERY_TUCK_SPEED_SCALE, 1.0f, 0.0f, 0.0f);
+        if (done && Recovery_IsUprightHeld())
+        {
+            height_above_ground = recovery_stand_height;
+            recovery_stage_ms = now;
+            recovery_stage = 6U;
+        }
+        else if ((uint32_t)(now - recovery_stage_ms) >= RECOVERY_STAND_TIMEOUT_MS)
+        {
+            if (recovery_attempt < RECOVERY_MAX_ATTEMPTS)
+            {
+                recovery_attempt++;
+                recovery_stage = 0U;
+            }
+            else
+            {
+                recovery_stage = 5U;
+            }
+            recovery_upright_tracking = 0U;
+        }
+        break;
+
+    case 5: /* Attempts exhausted: remain compact until manually placed upright. */
+        Posture_UpdatePose(RECOVERY_TUCK_HEIGHT_CM, RECOVERY_TUCK_HEIGHT_CM,
+                           0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                           RECOVERY_TUCK_SPEED_SCALE, 1.0f, 0.0f, 0.0f);
+        if (Recovery_IsUprightHeld())
+        {
+            recovery_stage_ms = now;
+            recovery_stage = 4U;
+            recovery_upright_tracking = 0U;
+        }
+        break;
+
+    default: /* Hold standing before handing control back to normal modes. */
+        Posture_UpdatePose(recovery_stand_height, recovery_stand_height,
+                           0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                           RECOVERY_TUCK_SPEED_SCALE, 1.0f, 0.0f, 0.0f);
+        if ((uint32_t)(now - recovery_stage_ms) >= RECOVERY_STAND_HOLD_MS)
+        {
+            recovery_running = 0U;
+            recovery_stage = 0U;
+            GAIT_MODE_LAST = 0U;
+            GAIT_MODE = GAIT_MODE_STAND;
+        }
+        break;
+    }
 }
 
 static uint8_t wave_stage = 0;
@@ -305,7 +548,7 @@ void Body_Twist_move(void)
         }
         if (Posture_UpdatePose(TWIST_BODY_HEIGHT_CM, TWIST_BODY_HEIGHT_CM,
                                0.0f, 0.0f, offset, 0.0f, 0.0f,
-                               TWIST_FOLLOW_SPEED_SCALE, 0.0f, 0.0f) &&
+                               1.0f, TWIST_FOLLOW_SPEED_SCALE, 0.0f, 0.0f) &&
             elapsed >= TWIST_DURATION_MS)
             twist_stage = 2;
     }
@@ -998,7 +1241,7 @@ void Stand_move(void )
     /* In stand mode height_above_ground is the requested symmetric height. */
     Balance_GetCorrections(1.0f, &balance_roll, &balance_pitch);
     Posture_UpdatePose(height_above_ground, height_above_ground,
-                       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                       0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
                        balance_roll, balance_pitch);
     GAIT_MODE_LAST = GAIT_MODE_STAND;
 }

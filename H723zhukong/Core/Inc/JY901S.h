@@ -56,8 +56,8 @@ typedef enum {
  
 // 按当前安装方向映射后的机身角度，单位：度。
 typedef struct {
-    float  roll;   // 左右侧倾：传感器 Y 角，左侧抬高为正
-    float  pitch;  // 前后俯仰：传感器 X 角，前方抬高为正
+    float  roll;   // 左右侧倾：传感器 Y 角，左侧抬高为负
+    float  pitch;  // 前后俯仰：传感器 X 角，后方抬高为正、前方抬高为负
     float  yaw;    // 航向：传感器 Z 角，逆时针增大
 } JY901S_AngleData;
 

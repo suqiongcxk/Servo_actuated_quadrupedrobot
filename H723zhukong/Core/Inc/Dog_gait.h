@@ -29,6 +29,7 @@ void Self_Rotation_move(void);
 #define GAIT_MODE_WAVE_LEFT_FRONT 10
 #define GAIT_MODE_DANCE          11
 #define GAIT_MODE_BODY_TWIST     12
+#define GAIT_MODE_SELF_RIGHT     13
 #define TWIST_DURATION_MS        7500U
 #define TWIST_SWAY_MS            6000U
 #define TWIST_BODY_HEIGHT_CM     12.0f
@@ -37,6 +38,8 @@ void Self_Rotation_move(void);
 #define TWIST_CYCLES              4U
 void Body_Twist_Start(void);
 void Body_Twist_move(void);
+void Fall_Recovery_Monitor(void);
+void Self_Right_move(void);
 #define DANCE_DURATION_MS         6500U
 #define DANCE_BODY_HEIGHT_CM     12.0f
 #define DANCE_BOB_CM              4.0f
@@ -80,8 +83,8 @@ void Wave_Left_Front_move(void);
 #define BALANCE_ENABLE                  1
 #define BALANCE_ROLL_ZERO_DEG          0.0f
 #define BALANCE_PITCH_ZERO_DEG         0.0f
-#define BALANCE_ROLL_DIRECTION         1.0f
-#define BALANCE_PITCH_DIRECTION        1.0f
+#define BALANCE_ROLL_DIRECTION        -1.0f
+#define BALANCE_PITCH_DIRECTION       -1.0f
 #define BALANCE_ANGLE_DEADBAND_DEG      0.30f
 #define BALANCE_MAX_ANGLE_DEG          15.0f
 #define BALANCE_MAX_RATE_DPS          100.0f
@@ -91,6 +94,29 @@ void Wave_Left_Front_move(void);
 #define BALANCE_OUTPUT_FILTER_GAIN      0.15f
 #define BALANCE_WALK_SCALE              0.55f
 #define BALANCE_RESET_GAP_MS           100U
+
+/* Supine detection and self-righting. The IMU body-up vector is used because
+ * an upside-down Euler angle can wrap between +180 and -180 degrees.
+ */
+#define FALL_RECOVERY_ENABLE               0 /* Disabled: self-righting is not reliable. */
+#define FALL_INVERTED_UP_Z_MAX             -0.70f
+#define FALL_DETECT_HOLD_MS             500U
+#define RECOVERY_TUCK_HEIGHT_CM           6.0f
+#define RECOVERY_PUSH_HEIGHT_CM          18.0f
+#define RECOVERY_PRE_SWING_CM              3.0f
+#define RECOVERY_POWER_SWING_CM            3.0f
+#define RECOVERY_INITIAL_ROLL_DIRECTION    1.0f
+#define RECOVERY_TUCK_SPEED_SCALE         0.35f
+#define RECOVERY_PUSH_SPEED_SCALE         2.0f
+#define RECOVERY_SWING_SPEED_SCALE        3.0f
+#define RECOVERY_WAIT_AFTER_TUCK_MS     1000U
+#define RECOVERY_PUSH_HOLD_MS            800U
+#define RECOVERY_UPRIGHT_ROLL_DEG         35.0f
+#define RECOVERY_UPRIGHT_PITCH_DEG        45.0f
+#define RECOVERY_UPRIGHT_HOLD_MS         300U
+#define RECOVERY_STAND_TIMEOUT_MS        4000U
+#define RECOVERY_STAND_HOLD_MS          1000U
+#define RECOVERY_MAX_ATTEMPTS              3U
 
 /* Call Start once after GAIT_Init, before osKernelStart.
  * Walk_Forward is called by the existing gait task every 5 ms.

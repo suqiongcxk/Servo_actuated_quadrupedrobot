@@ -218,9 +218,12 @@ void zhuhanshuTask03(void *argument)
   /* Infinite loop */
   for(;;)
   {
-
+    Fall_Recovery_Monitor();
     switch (GAIT_MODE)
     {
+      case GAIT_MODE_SELF_RIGHT:
+        Self_Right_move();
+        break;
       case GAIT_MODE_SELF_ROTATION:
         Self_Rotation_move();
         break;

@@ -97,8 +97,8 @@ JY901S_Status JY901S_ReadACC(I2C_HandleTypeDef *hi2c, JY901S_ACCData *ACC_data) 
 void PrintAngles(const JY901S_AngleData *angles) {
     // 转换为浮点数并打印（单位：度）
     printf(" %.2f, %.2f,  %.2f\n",
-           angles->roll ,   // 机身左右侧倾，左侧抬高为正
-           angles->pitch ,  // 机身前后俯仰，前方抬高为正
+           angles->roll ,   // 机身左右侧倾，左侧抬高为负
+           angles->pitch ,  // 机身前后俯仰，后方抬高为正、前方抬高为负
            angles->yaw );   // Z轴
     
 }
