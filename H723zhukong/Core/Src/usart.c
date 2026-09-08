@@ -21,6 +21,32 @@
 #include "usart.h"
 
 /* USER CODE BEGIN 0 */
+#include "cmsis_os.h"
+
+static osMutexId_t usart3_tx_mutex;
+void USART3_TxMutexInit(void)
+{
+    const osMutexAttr_t attr = { .name = "USART3_TX", .attr_bits = osMutexPrioInherit };
+    usart3_tx_mutex = osMutexNew(&attr);
+    if (usart3_tx_mutex == NULL) Error_Handler();
+}
+
+HAL_StatusTypeDef USART3_TransmitLocked(const uint8_t *data, uint16_t size,
+                                       uint32_t timeout_ms)
+{
+    HAL_StatusTypeDef result;
+    uint8_t locked = 0U;
+    if (__get_IPSR() != 0U) return HAL_BUSY;
+    if (osKernelGetState() == osKernelRunning) {
+        uint32_t ticks = (uint32_t)(((uint64_t)timeout_ms * osKernelGetTickFreq() + 999U) / 1000U);
+        if (usart3_tx_mutex == NULL ||
+            osMutexAcquire(usart3_tx_mutex, ticks) != osOK) return HAL_BUSY;
+        locked = 1U;
+    }
+    result = HAL_UART_Transmit(&huart3, (uint8_t *)data, size, timeout_ms);
+    if (locked) osMutexRelease(usart3_tx_mutex);
+    return result;
+}
 
 
 uint8_t RS485_rx_dma_buffer[100];
@@ -94,13 +120,9 @@ int fputc(int ch, FILE *f)
 #ifdef PLATFORM_H723
 int fputc(int ch, FILE *f)
 {
-    // 等待发送数据寄存器为空（H723与G4类似，使用ISR状态寄存器和TXE位）
-    while((USART3->ISR & USART_ISR_TXE_TXFNF) == 0);  //状态中断寄存器fifo为空
-    //   USART_ISR_TXE_TXFNF            Transmit Data Register Empty or TX FIFO Not Full Flag 
-    // 将数据写入发送数据寄存器（H723使用TDR发送数据寄存器，与G4一致）
-    USART3->TDR = (uint8_t)ch;  //发送数据寄存器
-    
-    return ch;
+    uint8_t byte = (uint8_t)ch;
+    (void)f;
+    return USART3_TransmitLocked(&byte, 1U, 20U) == HAL_OK ? ch : EOF;
 }
 #endif
 /* USER CODE END 0 */

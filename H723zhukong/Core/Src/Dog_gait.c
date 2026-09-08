@@ -4,14 +4,20 @@
 static uint8_t posture_settling = 0;
 
 /* Always recompute the error: changing the target cannot retain an old sign. */
-static float Posture_Approach(float current, float target)
+static float Posture_ApproachScaled(float current, float target, float speed_scale)
 {
     float error = target - current;
-    float step = POSTURE_APPROACH_GAIN * error;
+    float step = POSTURE_APPROACH_GAIN * speed_scale * error;
+    float max_step = POSTURE_MAX_STEP_CM * speed_scale;
     if (fabsf(error) <= POSTURE_SNAP_CM) return target;
-    if (step > POSTURE_MAX_STEP_CM) step = POSTURE_MAX_STEP_CM;
-    if (step < -POSTURE_MAX_STEP_CM) step = -POSTURE_MAX_STEP_CM;
+    if (step > max_step) step = max_step;
+    if (step < -max_step) step = -max_step;
     return current + step;
+}
+
+static float Posture_Approach(float current, float target)
+{
+    return Posture_ApproachScaled(current, target, 1.0f);
 }
 
 /* Preserve the last commanded foot coordinates, including a lifted foot.
@@ -20,7 +26,8 @@ static float Posture_Approach(float current, float target)
  */
 static uint8_t Posture_UpdatePose(float front_height, float rear_height,
                                  float left_front_x, float left_front_lift,
-                                 float twist_offset)
+                                 float twist_offset, float lateral_offset,
+                                 float stance_spread, float lateral_speed_scale)
 {
     gait_XY *xy[4] = {&LEG1_XY, &LEG2_XY, &LEG3_XY, &LEG4_XY};
     gait_YZ *yz[4] = {&LEG1_YZ, &LEG2_YZ, &LEG3_YZ, &LEG4_YZ};
@@ -32,15 +39,19 @@ static uint8_t Posture_UpdatePose(float front_height, float rear_height,
         float target = (i < 2) ? front_height : rear_height;
         float target_x = (i == 0) ? left_front_x : 0.0f;
         float target_y = (i == 0) ? left_front_lift : 0.0f;
-        /* Same front/rear sign convention as REMOTE_V_Set's turn command. */
-        float lateral = (i < 2) ? twist_offset : -twist_offset;
+        /* LEG1/4 are left; LEG2/3 are right.  Opposite signs widen the stance. */
+        float side = (i == 0 || i == 3) ? -1.0f : 1.0f;
+        /* Keep the existing front/rear sign convention for body twist. */
+        float lateral = lateral_offset + side * stance_spread +
+                        ((i < 2) ? twist_offset : -twist_offset);
         float vertical;
         xy[i]->resolution = 0;
         yz[i]->resolution = 0;
         yz[i]->LEG_BODY_height = Posture_Approach(yz[i]->LEG_BODY_height, target);
         xy[i]->foot_top_X = Posture_Approach(xy[i]->foot_top_X, target_x);
         xy[i]->foot_top_Y = Posture_Approach(xy[i]->foot_top_Y, target_y);
-        yz[i]->foot_top_Y = Posture_Approach(yz[i]->foot_top_Y, lateral);
+        yz[i]->foot_top_Y = Posture_ApproachScaled(yz[i]->foot_top_Y, lateral,
+                                                  lateral_speed_scale);
         yz[i]->foot_top_Z = Posture_Approach(yz[i]->foot_top_Z, 0.0f);
         vertical = yz[i]->LEG_BODY_height - yz[i]->foot_top_Z;
         yz[i]->foot_top_h_Z_2 = vertical * vertical;
@@ -59,12 +70,22 @@ static uint8_t Posture_UpdatePose(float front_height, float rear_height,
 static uint8_t Posture_UpdateTargets(float front_height, float rear_height,
                                     float left_front_x, float left_front_lift)
 {
-    return Posture_UpdatePose(front_height, rear_height, left_front_x, left_front_lift, 0.0f);
+    return Posture_UpdatePose(front_height, rear_height, left_front_x, left_front_lift,
+                              0.0f, 0.0f, 0.0f, 1.0f);
 }
 
 static uint8_t Posture_Update(float front_height, float rear_height)
 {
     return Posture_UpdateTargets(front_height, rear_height, 0.0f, 0.0f);
+}
+
+/* A positive body shift moves the body right by commanding all feet left. */
+static uint8_t Posture_UpdateSit(float left_front_x, float left_front_lift,
+                                float body_shift_right)
+{
+    return Posture_UpdatePose(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM,
+                              left_front_x, left_front_lift, 0.0f,
+                              -body_shift_right, SIT_STANCE_SPREAD_CM, 1.0f);
 }
 
 static uint8_t wave_stage = 0;
@@ -173,7 +194,7 @@ void Body_Twist_Start(void)
 }
 
 /* Stand, sway front/rear in opposite directions without stepping, then center.
- * Six seconds after preparation. The sine-squared envelope eases both ends.
+ * 7.5 seconds after preparation. The sine-squared envelope eases both ends.
  */
 void Body_Twist_move(void)
 {
@@ -201,7 +222,9 @@ void Body_Twist_move(void)
                      sinf(6.28318530718f * TWIST_CYCLES * t);
         }
         if (Posture_UpdatePose(TWIST_BODY_HEIGHT_CM, TWIST_BODY_HEIGHT_CM,
-                               0.0f, 0.0f, offset) && elapsed >= TWIST_DURATION_MS)
+                               0.0f, 0.0f, offset, 0.0f, 0.0f,
+                               TWIST_FOLLOW_SPEED_SCALE) &&
+            elapsed >= TWIST_DURATION_MS)
             twist_stage = 2;
     }
     height_above_ground = (LEG1_YZ.LEG_BODY_height + LEG2_YZ.LEG_BODY_height +
@@ -218,9 +241,9 @@ void Dance_Start(void)
     GAIT_MODE = GAIT_MODE_DANCE;
 }
 
-/* Ten-second routine after settling into the starting stance.
+/* 6.5-second routine after settling into the starting stance.
  * Front/rear height offsets: squat, rise, bow, rise, rear dip, rise,
- * squat, rise, then a two-second neutral finish. All feet stay down.
+ * squat, rise, then a 1.3-second neutral finish. All feet stay down.
  */
 void Dance_move(void)
 {
@@ -269,7 +292,7 @@ static uint16_t wave_updates = 0;
 void Wave_Left_Front_Start(void)
 {
     /* Repeated start requests during an action do not restart its progress. */
-    if (GAIT_MODE != GAIT_MODE_WAVE_LEFT_FRONT || wave_stage == 4)
+    if (GAIT_MODE != GAIT_MODE_WAVE_LEFT_FRONT || wave_stage == 6)
         wave_stage = 0;
     GAIT_MODE = GAIT_MODE_WAVE_LEFT_FRONT;
 }
@@ -284,32 +307,40 @@ void Wave_Left_Front_move(void)
     posture_settling = 0;
     switch (wave_stage)
     {
-    case 0: /* Sit and settle all four feet first. */
-        if (Posture_Update(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM))
+    case 0: /* Sit with a wider stance and settle all four feet first. */
+        if (Posture_UpdateSit(0.0f, 0.0f, 0.0f))
             wave_stage = 1;
         break;
-    case 1: /* Lift only the left front foot. */
-        if (Posture_UpdateTargets(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM,
-                                  WAVE_REACH_CM, WAVE_LIFT_CM))
+    case 1: /* Shift weight to the right before removing left-front support. */
+        if (Posture_UpdateSit(0.0f, 0.0f, WAVE_BODY_SHIFT_RIGHT_CM))
+            wave_stage = 2;
+        break;
+    case 2: /* Lift only the left front foot while holding the weight shift. */
+        if (Posture_UpdateSit(WAVE_REACH_CM, WAVE_LIFT_CM,
+                              WAVE_BODY_SHIFT_RIGHT_CM))
         {
             wave_updates = 0;
-            wave_stage = 2;
+            wave_stage = 3;
         }
         break;
-    case 2:
+    case 3:
         x = WAVE_REACH_CM + 0.5f * WAVE_SWING_CM *
             (1.0f - cosf(6.28318530718f *
              (float)(wave_updates % WAVE_PERIOD_UPDATES) / WAVE_PERIOD_UPDATES));
-        Posture_UpdateTargets(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM, x, WAVE_LIFT_CM);
+        Posture_UpdateSit(x, WAVE_LIFT_CM, WAVE_BODY_SHIFT_RIGHT_CM);
         if (++wave_updates >= WAVE_PERIOD_UPDATES * WAVE_REPEAT_COUNT)
-            wave_stage = 3;
-        break;
-    case 3: /* Lower smoothly, retaining the actual last commanded position. */
-        if (Posture_Update(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM))
             wave_stage = 4;
         break;
+    case 4: /* Put the left-front foot down before moving the body back. */
+        if (Posture_UpdateSit(0.0f, 0.0f, WAVE_BODY_SHIFT_RIGHT_CM))
+            wave_stage = 5;
+        break;
+    case 5: /* Return to the centered, widened sitting pose. */
+        if (Posture_UpdateSit(0.0f, 0.0f, 0.0f))
+            wave_stage = 6;
+        break;
     default: /* Hold seated; a held Bluetooth button must not repeat the action. */
-        Posture_Update(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM);
+        Posture_UpdateSit(0.0f, 0.0f, 0.0f);
         break;
     }
     height_above_ground = (LEG1_YZ.LEG_BODY_height + LEG2_YZ.LEG_BODY_height +
@@ -419,10 +450,10 @@ float Hip_lenth           = 4.5;
 float Crawl_height        = 15; 
 float Tort_height         = 16; 
 float Crawl_resolution    = 12; 
-float Tort_resolution     = 8; //8	
+float Tort_resolution     = TORT_RESOLUTION_MIN;
 
 /// @brief 步态模式记录
-uint8_t GAIT_MODE         = GAIT_MODE_SIT_DOWN ;
+uint8_t GAIT_MODE         = GAIT_MODE_STAND ; // 上电默认静止站立
 uint8_t GAIT_MODE_LAST    = 0 ;
 
 
@@ -576,9 +607,26 @@ void Crawl_move(void )
 3号腿同步
 四号腿与二号腿同步，相差半个周期
 */
+static float Tortoise_TargetResolution(void)
+{
+    float forward_command = fmaxf(fabsf(forward_start), fabsf(forward_end));
+    float lateral_command = fmaxf(fabsf(translate_BEGAIN), fabsf(translate_END));
+    float motion_command = fmaxf(forward_command, lateral_command);
+    float speed_ratio;
+
+    speed_ratio = (motion_command - TORT_CADENCE_START_CM) /
+                  (TORT_CADENCE_FULL_CM - TORT_CADENCE_START_CM);
+    if (speed_ratio < 0.0f) speed_ratio = 0.0f;
+    if (speed_ratio > 1.0f) speed_ratio = 1.0f;
+    return TORT_RESOLUTION_MIN +
+           (TORT_RESOLUTION_MAX - TORT_RESOLUTION_MIN) * speed_ratio;
+}
+
 void Tortoise_move(void )
 {
+    float target_resolution;
     if (Posture_BeforeWalk(Tort_height, GAIT_MODE_TORT)) return;
+    target_resolution = Tortoise_TargetResolution();
     if(GAIT_MODE_LAST != GAIT_MODE_TORT)
     {
         // 更改步态参数
@@ -587,6 +635,7 @@ void Tortoise_move(void )
                 forward_start = MOVE_DISTENCE_START;
                 forward_end = MOVE_DISTENCE_END;
                 forward_height = foot_top_height;
+				Tort_resolution = target_resolution;
 				resolution = Tort_resolution;
 			
         GAIT_Init(forward_start,forward_end, forward_height, resolution,
@@ -602,6 +651,10 @@ void Tortoise_move(void )
         GAIT_MODE_LAST = GAIT_MODE_TORT;
     }else
     {
+        /* Change cadence continuously with command size without a phase jump. */
+        Tort_resolution += TORT_CADENCE_FILTER_GAIN *
+                           (target_resolution - Tort_resolution);
+        resolution = Tort_resolution;
         #ifdef ZIYOUDU_8
 
         /*
@@ -936,7 +989,7 @@ void March_move(void )
 void sit_down(void )
 {
     posture_settling = 0;
-    Posture_Update(SIT_FRONT_HEIGHT_CM, SIT_REAR_HEIGHT_CM);
+    Posture_UpdateSit(0.0f, 0.0f, 0.0f);
     height_above_ground = (LEG1_YZ.LEG_BODY_height + LEG2_YZ.LEG_BODY_height +
                            LEG3_YZ.LEG_BODY_height + LEG4_YZ.LEG_BODY_height) * 0.25f;
     GAIT_MODE_LAST = GAIT_MODE_SIT_DOWN;

@@ -29,14 +29,15 @@ void Self_Rotation_move(void);
 #define GAIT_MODE_WAVE_LEFT_FRONT 10
 #define GAIT_MODE_DANCE          11
 #define GAIT_MODE_BODY_TWIST     12
-#define TWIST_DURATION_MS        6000U
-#define TWIST_SWAY_MS            4000U
+#define TWIST_DURATION_MS        7500U
+#define TWIST_SWAY_MS            6000U
 #define TWIST_BODY_HEIGHT_CM     12.0f
-#define TWIST_OFFSET_CM           2.0f
-#define TWIST_CYCLES              2U
+#define TWIST_OFFSET_CM           3.0f
+#define TWIST_FOLLOW_SPEED_SCALE  2.0f /* Lateral tracking only. */
+#define TWIST_CYCLES              4U
 void Body_Twist_Start(void);
 void Body_Twist_move(void);
-#define DANCE_DURATION_MS        10000U
+#define DANCE_DURATION_MS         6500U
 #define DANCE_BODY_HEIGHT_CM     12.0f
 #define DANCE_BOB_CM              4.0f
 void Dance_Start(void);
@@ -44,6 +45,8 @@ void Dance_move(void);
 #define WAVE_LIFT_CM             5.0f
 #define WAVE_REACH_CM            2.0f
 #define WAVE_SWING_CM            6.0f
+#define SIT_STANCE_SPREAD_CM     1.0f /* Move each foot outward from the body. */
+#define WAVE_BODY_SHIFT_RIGHT_CM 1.5f /* Shift weight away from the lifted left-front leg. */
 #define WAVE_PERIOD_UPDATES      360U /* 1.8 s at 5 ms/update. */
 #define WAVE_REPEAT_COUNT        2U
 void Wave_Left_Front_Start(void);
@@ -55,12 +58,21 @@ void Wave_Left_Front_move(void);
 #define FORWARD_TEST_BODY_HEIGHT_CM 13.0f
 #define FORWARD_TEST_RESOLUTION      4U
 
+/* Trot cadence follows the requested foot excursion.
+ * At a 5 ms gait update and 0.5 duty cycle, resolution 4/8 is about 1/2 Hz.
+ */
+#define TORT_RESOLUTION_MIN           4.0f
+#define TORT_RESOLUTION_MAX           8.0f
+#define TORT_CADENCE_START_CM         0.20f
+#define TORT_CADENCE_FULL_CM          2.50f
+#define TORT_CADENCE_FILTER_GAIN      0.05f
+
 /* Posture transition, called every 5 ms. Distances are in cm. */
-#define POSTURE_MAX_STEP_CM          0.02f
-#define POSTURE_APPROACH_GAIN        0.02f
+#define POSTURE_MAX_STEP_CM          0.08f
+#define POSTURE_APPROACH_GAIN        0.08f
 #define POSTURE_SNAP_CM              0.001f
 #define SIT_FRONT_HEIGHT_CM         12.0f
-#define SIT_REAR_HEIGHT_CM           4.0f
+#define SIT_REAR_HEIGHT_CM           7.0f
 
 /* Call Start once after GAIT_Init, before osKernelStart.
  * Walk_Forward is called by the existing gait task every 5 ms.
@@ -96,4 +108,3 @@ void Stand_move(void );
 void March_move(void );
 void sit_down(void );
 #endif
-

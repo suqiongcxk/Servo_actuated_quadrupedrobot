@@ -117,7 +117,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	Enable_DWT_CycleCounter();
 	
-	HAL_Delay(5000);
+	HAL_Delay(8000);
 	HAL_TIM_Base_Start(&htim2);
 	
 	

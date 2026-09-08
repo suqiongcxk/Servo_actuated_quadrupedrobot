@@ -149,9 +149,9 @@ void get_blue_tooth (void )
         if (GAIT_MODE == GAIT_MODE_FORWARD_TEST)
         {
             if (USART6_dma_buffer[1] == 5)
-                HAL_UART_Transmit(&huart3, &Enable, 1, 20);
+                USART3_TransmitLocked(&Enable, 1, 20);
             else if (USART6_dma_buffer[1] == 6)
-                HAL_UART_Transmit(&huart3, &Disable, 1, 20);
+                USART3_TransmitLocked(&Disable, 1, 20);
             return;
         }
 			switch (USART6_dma_buffer[1] )   //档位切换
@@ -160,8 +160,8 @@ void get_blue_tooth (void )
 			case 2:Remote_V_Limit = RE_mid;GAIT_MODE = GAIT_MODE_TORT ; break ;
 			case 3:Remote_V_Limit = RE_hig;GAIT_MODE = GAIT_MODE_TORT ; break ;
 			case 4:GAIT_MODE = GAIT_MODE_SIT_DOWN ; break ;
-			case 5:HAL_UART_Transmit(&huart3 , &Enable,1,20);break;
-			case 6:HAL_UART_Transmit(&huart3 , &Disable,1,20);break;
+			case 5:USART3_TransmitLocked(&Enable, 1, 20);break;
+			case 6:USART3_TransmitLocked(&Disable, 1, 20);break;
             case 7:
                 if (wave_pressed) Wave_Left_Front_Start();
                 return;
@@ -178,6 +178,19 @@ void get_blue_tooth (void )
 		REMOTE_BASIC_F_B_V = USART6_dma_buffer[4] / 50.0;
 
         Bluetooth_FilterMotion();
+
+        /* A neutral stick puts TORT mode into STAND.  The following Bluetooth
+         * frames may contain only stick data, so restore the selected walking
+         * mode when motion becomes active again.  Tortoise_move() performs the
+         * existing smooth posture transition before it starts stepping. */
+        if (GAIT_MODE == GAIT_MODE_STAND &&
+            (bluetooth_move_active || bluetooth_turn_active) &&
+            (Remote_V_Limit == RE_LOW || Remote_V_Limit == RE_mid ||
+             Remote_V_Limit == RE_hig))
+        {
+            GAIT_MODE = GAIT_MODE_TORT;
+        }
+
 		REMOTE_V_Set(REMOTE_BASIC_L_R_V,REMOTE_BASIC_F_B_V,RE_turn_V ,Remote_V_Limit );
 
 		/* 调试区

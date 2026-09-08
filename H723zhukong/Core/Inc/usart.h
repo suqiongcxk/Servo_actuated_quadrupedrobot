@@ -56,6 +56,10 @@ void MX_USART6_UART_Init(void);
 void MX_USART10_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+/* Initialize after osKernelInitialize, before starting tasks. Task-context TX. */
+void USART3_TxMutexInit(void);
+HAL_StatusTypeDef USART3_TransmitLocked(const uint8_t *data, uint16_t size,
+                                       uint32_t timeout_ms);
 extern uint8_t RS485_rx_dma_buffer[100] ;
 extern uint8_t RS485_dma_buffer[100] ;
 extern volatile uint8_t RS485_flag;

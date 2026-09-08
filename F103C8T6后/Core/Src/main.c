@@ -132,19 +132,19 @@ C:\Users\CXK\Desktop\dog\12Srevo_slave_3_31\F103C8T6后\Core\Src\main.c
   HAL_TIM_PWM_Start(&htim1,Right_thigh_PWMchannel);
 	HAL_Delay(1500);
 ////////////////////////////// 调试区 
-//HAL_TIM_PWM_Start(&htim1,Right_lower_leg_PWMchannel); 
-//HAL_TIM_PWM_Start(&htim1,Left_lower_leg_PWMchannel); 		
-//	__HAL_TIM_SET_COMPARE(&htim1, Right_hip_PWMchannel , (88) *11.11f + 500); 
-//	__HAL_TIM_SET_COMPARE(&htim1, Right_thigh_PWMchannel , ( 95.94) *11.11f + 500);
+// HAL_TIM_PWM_Start(&htim1,Right_lower_leg_PWMchannel); 
+// HAL_TIM_PWM_Start(&htim1,Left_lower_leg_PWMchannel); 		
+// 	__HAL_TIM_SET_COMPARE(&htim1, Right_hip_PWMchannel , (88) *11.11f + 500); 
+	// __HAL_TIM_SET_COMPARE(&htim1, Right_thigh_PWMchannel , (25) *11.11f + 500);
 
-//	__HAL_TIM_SET_COMPARE(&htim1, Right_lower_leg_PWMchannel , (24) *11.11f + 500);
-//		HAL_TIM_PWM_Start(&htim1,Right_lower_leg_PWMchannel); 
-//	HAL_TIM_PWM_Start(&htim1,Left_lower_leg_PWMchannel); 
-//	 while(1)
-//	 {
-//		
-//	 }
-//	
+	// __HAL_TIM_SET_COMPARE(&htim1, Right_lower_leg_PWMchannel , (35) *11.11f + 500);
+	// 	HAL_TIM_PWM_Start(&htim1,Right_lower_leg_PWMchannel); 
+	// HAL_TIM_PWM_Start(&htim1,Left_lower_leg_PWMchannel); 
+	//  while(1)
+	//  {
+		
+	//  }
+	
 		
   /* USER CODE END 2 */
 

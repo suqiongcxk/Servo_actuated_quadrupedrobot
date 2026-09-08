@@ -35,6 +35,8 @@
 #include "Dog_gait.h"
 #include "geometric_method.h"
 #include "remote_contol.h"
+#include "JY901S.h"
+#include "i2c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -81,7 +83,7 @@ const osThreadAttr_t zhuhanshu_attributes = {
 osThreadId_t JY901Handle;
 const osThreadAttr_t JY901_attributes = {
   .name = "JY901",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for RS485RTX */
@@ -113,6 +115,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
+  USART3_TxMutexInit();
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
@@ -289,10 +292,27 @@ void zhuhanshuTask03(void *argument)
 void JY901Task04(void *argument)
 {
   /* USER CODE BEGIN JY901Task04 */
-  /* Infinite loop */
-  for(;;)
+#if JY901S_DEBUG_OUTPUT
+  uint32_t last_print = HAL_GetTick() - JY901S_PRINT_MS;
+#endif
+  TickType_t wake = xTaskGetTickCount();
+  (void)argument;
+  for (;;)
   {
-    osDelay(1);
+    JY901S_Status status = JY901S_Update(&hi2c1);
+#if JY901S_DEBUG_OUTPUT
+    uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - last_print) >= JY901S_PRINT_MS) {
+      JY901S_PrintLatest();
+      last_print = now;
+    }
+#endif
+    if (status != JY901S_OK) {
+      vTaskDelay(pdMS_TO_TICKS(JY901S_RETRY_MS));
+      wake = xTaskGetTickCount();
+    } else {
+      vTaskDelayUntil(&wake, pdMS_TO_TICKS(JY901S_SAMPLE_MS));
+    }
   }
   /* USER CODE END JY901Task04 */
 }

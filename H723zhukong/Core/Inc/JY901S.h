@@ -41,21 +41,22 @@ extern  uint16_t unlock_data ;	//解锁指令
 
 
 
-#define INTto_angle                         0.005493
+#define INTto_angle                         (180.0f / 32768.0f)
 
 
 // 错误码定义
 typedef enum {
     JY901S_OK = 0,
     JY901S_ERROR_I2C,
-    JY901S_ERROR_TIMEOUT
+    JY901S_ERROR_TIMEOUT,
+    JY901S_ERROR_ARGUMENT
 } JY901S_Status;
  
-// 三轴角度结构体（单位：度 × 100，避免浮点运算）
+// 按当前安装方向映射后的机身角度，单位：度。
 typedef struct {
-    float  roll;   // X轴（Roll）
-    float  pitch;  // Y轴（Pitch）
-    float  yaw;    // Z轴（Yaw）
+    float  roll;   // 左右侧倾：传感器 Y 角，左侧抬高为正
+    float  pitch;  // 前后俯仰：传感器 X 角，前方抬高为正
+    float  yaw;    // 航向：传感器 Z 角，逆时针增大
 } JY901S_AngleData;
  
 
@@ -111,6 +112,26 @@ HAL_StatusTypeDef JY9013S_SetRateHz_And_Save(I2C_HandleTypeDef *hi2c);
 HAL_StatusTypeDef JY9013S_SetBAUD_And_Save(I2C_HandleTypeDef *hi2c) ;
 void JY901SREG_init (void);
 HAL_StatusTypeDef JY9013S_SetAXIS6_And_Save(I2C_HandleTypeDef *hi2c) ;
+/* Monitor APIs are task-context only. Update has a single owner: JY901Task04. */
+#define JY901S_READ_TIMEOUT_MS 10U
+#define JY901S_SAMPLE_MS 15U
+#define JY901S_PRINT_MS 100U
+#define JY901S_RETRY_MS 500U
+#define JY901S_STALE_MS 200U
+#define JY901S_DEBUG_OUTPUT 0
+
+typedef struct {
+    JY901S_AngleData angles;
+    uint32_t timestamp_ms; /* Last successful bus read; not sensor sample time. */
+    uint32_t sample_count;
+    uint32_t error_count;
+    JY901S_Status status;
+    uint8_t valid;
+} JY901S_Snapshot;
+
+JY901S_Status JY901S_Update(I2C_HandleTypeDef *hi2c);
+uint8_t JY901S_GetLatest(JY901S_Snapshot *sample);
+void JY901S_PrintLatest(void);
 #endif // JY901S_H
 
 

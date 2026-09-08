@@ -393,4 +393,19 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 		
 		
 }
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        /* HAL 在接收错误后停止 DMA；仅在接收已停止时重启。 */
+        if (huart->RxState == HAL_UART_STATE_READY)
+        {
+            /* 先清空错误帧，再启动 DMA，避免覆盖新收到的数据。 */
+            memset(RS485_rx_dma_buffer, 0, sizeof(RS485_rx_dma_buffer));
+            HAL_UARTEx_ReceiveToIdle_DMA(&huart1, RS485_rx_dma_buffer,
+                                        sizeof(RS485_rx_dma_buffer));
+            __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
+        }
+    }
+}
 /* USER CODE END 1 */

@@ -1,4 +1,7 @@
-#include "jy901s.h"
+#include "JY901S.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "usart.h"
 #include <string.h>
 #include  "stdio.h"
 JY901S_Status my_dta ;
@@ -23,30 +26,23 @@ JY901S_Status JY901S_ReadRRATE(I2C_HandleTypeDef *hi2c, uint8_t *output_rate) {
 /**
  * @brief 读取三轴角度（Roll/Pitch/Yaw）
  * @param hi2c I2C句柄
- * @param angles 返回的角度结构体（单位：0.01度）
+ * @param angles 返回的角度结构体（单位：度）
  * @return 状态码     一次0.2ms
  */
-JY901S_Status JY901S_ReadAngles(I2C_HandleTypeDef *hi2c, JY901S_AngleData *angles) {
-    uint8_t buf[6] = {0};
- 
-    // 一次性读取6个数据（X/Y/Z的高低字节）
-    if (HAL_I2C_Mem_Read(hi2c, JY901S_I2C_ADDR, JY901S_REG_ANGLE_X_L  ,
-                        I2C_MEMADD_SIZE_8BIT, buf, 6, 100) != HAL_OK) {
-        return JY901S_ERROR_I2C;
-    }
-
-    // 合并高低字节（小端模式）
-		
-		
-	int16_t raw_roll  = (int16_t)((buf[1] << 8) | buf[0]);  // 先转int16_t，保留符号
-	int16_t raw_pitch = (int16_t)((buf[3] << 8) | buf[2]);
-	int16_t raw_yaw   = (int16_t)((buf[5] << 8) | buf[4]);
-
-
-    angles->roll  = raw_roll * INTto_angle;       // X轴
-    angles->pitch = raw_pitch * INTto_angle;      // Y轴
-    angles->yaw   = raw_yaw * INTto_angle;        // Z轴
-    
+JY901S_Status JY901S_ReadAngles(I2C_HandleTypeDef *hi2c, JY901S_AngleData *angles)
+{
+    uint8_t buf[6];
+    HAL_StatusTypeDef status;
+    if (hi2c == NULL || angles == NULL) return JY901S_ERROR_ARGUMENT;
+    status = HAL_I2C_Mem_Read(hi2c, JY901S_I2C_ADDR,
+                             JY901S_REG_ANGLE_X_L, I2C_MEMADD_SIZE_8BIT,
+                             buf, sizeof(buf), JY901S_READ_TIMEOUT_MS);
+    if (status == HAL_TIMEOUT) return JY901S_ERROR_TIMEOUT;
+    if (status != HAL_OK) return JY901S_ERROR_I2C;
+    /* Mounting map: sensor Y -> body roll, sensor X -> body pitch. */
+    angles->roll = (int16_t)((uint16_t)buf[3] << 8 | buf[2]) * INTto_angle;
+    angles->pitch = (int16_t)((uint16_t)buf[1] << 8 | buf[0]) * INTto_angle;
+    angles->yaw = (int16_t)((uint16_t)buf[5] << 8 | buf[4]) * INTto_angle;
     return JY901S_OK;
 }
 
@@ -84,8 +80,8 @@ JY901S_Status JY901S_ReadACC(I2C_HandleTypeDef *hi2c, JY901S_ACCData *ACC_data) 
 void PrintAngles(const JY901S_AngleData *angles) {
     // 转换为浮点数并打印（单位：度）
     printf(" %.2f, %.2f,  %.2f\n",
-           angles->roll ,   // X轴
-           angles->pitch ,  // Y轴
+           angles->roll ,   // 机身左右侧倾，左侧抬高为正
+           angles->pitch ,  // 机身前后俯仰，前方抬高为正
            angles->yaw );   // Z轴
     
 }
@@ -352,3 +348,59 @@ void JY901SREG_init (void)
 }
 
 
+
+static JY901S_Snapshot latest_sample = {
+    {0.0f, 0.0f, 0.0f}, 0U, 0U, 0U, JY901S_ERROR_I2C, 0U
+};
+
+JY901S_Status JY901S_Update(I2C_HandleTypeDef *hi2c)
+{
+    JY901S_AngleData angles;
+    JY901S_Status status = JY901S_ReadAngles(hi2c, &angles);
+    uint32_t now = HAL_GetTick();
+    taskENTER_CRITICAL();
+    latest_sample.status = status;
+    latest_sample.valid = (status == JY901S_OK);
+    if (status == JY901S_OK) {
+        latest_sample.angles = angles;
+        latest_sample.timestamp_ms = now;
+        latest_sample.sample_count++;
+    } else {
+        latest_sample.error_count++;
+    }
+    taskEXIT_CRITICAL();
+    return status;
+}
+
+uint8_t JY901S_GetLatest(JY901S_Snapshot *sample)
+{
+    if (sample == NULL) return 0U;
+    taskENTER_CRITICAL();
+    *sample = latest_sample;
+    taskEXIT_CRITICAL();
+    if ((uint32_t)(HAL_GetTick() - sample->timestamp_ms) > JY901S_STALE_MS)
+        sample->valid = 0U;
+    return sample->valid;
+}
+
+void JY901S_PrintLatest(void)
+{
+    JY901S_Snapshot sample;
+    char line[160];
+    int length;
+    JY901S_GetLatest(&sample);
+    if (sample.valid) {
+        length = snprintf(line, sizeof(line),
+            "IMU t=%lu Roll=%.2f Pitch=%.2f Yaw=%.2f deg valid=1\r\n",
+            (unsigned long)sample.timestamp_ms,
+            (double)sample.angles.roll, (double)sample.angles.pitch,
+            (double)sample.angles.yaw);
+    } else {
+        length = snprintf(line, sizeof(line),
+            "IMU t=%lu valid=0 status=%u errors=%lu (check I2C1 PB6/PB7, addr=0x50)\r\n",
+            (unsigned long)HAL_GetTick(), (unsigned)sample.status,
+            (unsigned long)sample.error_count);
+    }
+    if (length > 0 && length < (int)sizeof(line))
+        USART3_TransmitLocked((const uint8_t *)line, (uint16_t)length, 20U);
+}

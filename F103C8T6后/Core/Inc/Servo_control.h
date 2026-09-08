@@ -50,8 +50,8 @@ extern uint16_t			Left_hip_channel     	 	    ;		//左髋舵机通道
 #define     Left_thigh_ZERO_angle  	              162.5
 #define     Left_lower_leg_ZERO_angle             150
 #define     Left_hip_ZERO_angle                   51
-#define     Right_thigh_ZERO_angle                30      //大腿向上与水平面夹角为65.94度
-#define     Right_lower_leg_ZERO_angle            24      //大小腿之间的夹角是80.51度
+#define     Right_thigh_ZERO_angle                25      //大腿向上与水平面夹角为65.94度
+#define     Right_lower_leg_ZERO_angle            35      //大小腿之间的夹角是80.51度
 #define     Right_hip_ZERO_angle                  133.78         
 	
 extern const float    RIGHT_hip_SW_angle  ;
